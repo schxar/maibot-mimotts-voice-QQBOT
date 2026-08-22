@@ -64,7 +64,10 @@ voice_adapter = "qq_official"
 | `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
 | `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
 | `design_voice` | 音色设计模式的一句话中文描述（design 模式，无需参考音频） | 见 config.example.toml |
-| `design_voice_en` | 音色设计模式的一句话英文描述（`/tts +英文` 时使用，不同国家口音） | 见 config.example.toml |
+| `design_voice_en` | 音色设计模式的一句话英文描述（默认英文时使用，不同国家口音） | 见 config.example.toml |
+| `voice_language` | 默认语音语言：`en`（英文，默认）或 `zh`（中文）；`/tts` 第三段与工具 `reply_language` 可临时覆盖 | `en` |
+| `auto_translate` | 语言为英文时，若文本/风格/音色描述含中文，自动调用 LLM 翻译为英文再合成 | `true` |
+| `llm_task` | 自动翻译使用的模型任务名（如 `replyer`/`planner`/`utils`），需与主程序 `model_config.toml` 的任务名一致 | `replyer` |
 | `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
 | `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
 | `save_dir` | 语音存档目录（相对于插件目录） | `output` |
@@ -225,6 +228,16 @@ maibot-mimotts-voice/
 ```
 
 ## 更新日志
+
+### v1.7.7
+
+- 🔁 **自动翻译**：英文模式下若文本、风格指令或音色描述含中文，自动调用 LLM 翻译为英文后再合成（含括号语气标签保留），不再出现中文破音
+- ⚙️ 新增 `auto_translate`、`llm_task` 配置
+
+### v1.7.6
+
+- 🌐 **默认语言配置**：新增 `voice_language` 配置项（`en`/`zh`，默认英文，避免参考音色读中文破音），`/tts` 与工具语言参数可临时覆盖
+- 📢 工具提示词同步为默认英文语音：reply_text 默认写英文，明确要中文时才传 `reply_language='zh'`
 
 ### v1.7.5
 

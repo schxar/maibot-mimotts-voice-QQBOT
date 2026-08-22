@@ -52,7 +52,19 @@ class VoiceSectionConfig(PluginConfigBase):
     )
     design_voice_en: str = Field(
         default="A sweet young woman with a soft clear voice, gentle and a little playful, like whispering in a lover's ear.",
-        description="音色设计模式的一句话英文描述（/tts +英文 时使用,支持不同国家口音）",
+        description="音色设计模式的一句话英文描述（默认语言为英文时生效,支持不同国家口音）",
+    )
+    voice_language: str = Field(
+        default="en",
+        description="默认语音语言: 'zh'(中文) 或 'en'(英文);/tts 第三段与工具 reply_language 可临时覆盖",
+    )
+    auto_translate: bool = Field(
+        default=True,
+        description="语言为英文时,若文本/风格/音色描述含中文,自动调用LLM翻译为英文再合成",
+    )
+    llm_task: str = Field(
+        default="replyer",
+        description="自动翻译使用的模型任务名(如 replyer/planner/utils),需与主程序 model_config.toml 的任务名一致",
     )
     voice_adapter: str = Field(
         default="qq_official",
@@ -285,6 +297,30 @@ class AIVoicePlugin(MaiBotPlugin):
         self.ctx.logger.info("NapCat voice sent via record+base64, stream=%s", stream_id)
         return True
 
+    @staticmethod
+    def _contains_chinese(text: str) -> bool:
+        """判断文本是否包含常用汉字(CJK 统一表意文字)。"""
+
+        return any(0x4E00 <= ord(character) <= 0x9FFF for character in text)
+
+    async def _translate_to_english(self, text: str) -> str:
+        """调用 Host LLM 把文本翻译成英文,保留括号语气标签。"""
+
+        task_name = (self.config.voice.llm_task or "").strip() or "replyer"
+        prompt = (
+            "请把下面的一段话翻译成英文,保持口语化与原有的情绪语气,"
+            "直接输出翻译结果,不要任何解释、引号或额外内容。\n"
+            "若原文包含括号语气标签(如(轻笑)(叹气)(温柔)),请保留在原位。\n\n"
+            f"{text}"
+        )
+        result = await self.ctx.llm.generate(prompt, model=task_name)
+        if not isinstance(result, dict) or not result.get("success"):
+            raise RuntimeError(str((result or {}).get("error") or "LLM 无法响应"))
+        translated_text = str(result.get("response") or "").strip()
+        if not translated_text:
+            raise RuntimeError("LLM 翻译结果为空")
+        return translated_text
+
     def _resolve_voice(self, voice_name: str, voice_language: str = "") -> tuple[str, str, str]:
         """解析音色名称，返回 (voice_key, audio_base64, mode)。
         mode: 'clone' 使用音色复刻, 'preset' 使用预置音色。
@@ -347,7 +383,34 @@ class AIVoicePlugin(MaiBotPlugin):
         if not text or not text.strip():
             return {"success": False, "error": "Empty text"}
 
-        voice_key, ref_audio, mode = self._resolve_voice(voice_name, voice_language)
+        # 语言取数优先级:调用方参数 > 配置默认;仅识别 zh(中文) 与 en(英文)
+        language_override = (voice_language or self.config.voice.voice_language or "").strip().lower()
+        if language_override in {"中文", "普通话", "zh", "cn"}:
+            effective_language = "zh"
+        elif language_override in {"英文", "英语", "en", "english"}:
+            effective_language = "en"
+        else:
+            effective_language = ""
+
+        voice_key, ref_audio, mode = self._resolve_voice(voice_name, effective_language)
+
+        # 英文模式下,中文文本/风格/音色描述自动翻译为英文后再合成
+        tts_text = text
+        tts_style = style_instruction
+        if effective_language == "en" and self.config.voice.auto_translate:
+            try:
+                if self._contains_chinese(text):
+                    tts_text = await self._translate_to_english(text)
+                    self.ctx.logger.info("文本已翻译为英文: %s -> %s", text[:60], tts_text[:80])
+                if self._contains_chinese(tts_style):
+                    tts_style = await self._translate_to_english(tts_style)
+                    self.ctx.logger.info("风格已翻译为英文: %s", tts_style[:80])
+                if mode == "design" and self._contains_chinese(voice_key):
+                    voice_key = await self._translate_to_english(voice_key)
+                    self.ctx.logger.info("音色描述已翻译为英文: %s", voice_key[:80])
+            except Exception as exc:
+                self.ctx.logger.error(f"自动翻译失败: {exc}", exc_info=True)
+                return {"success": False, "error": f"自动翻译失败,请检查主程序模型配置: {exc}"}
         if not voice_key:
             return {"success": False, "error": "No voice configured. Check voice config."}
 
@@ -355,20 +418,19 @@ class AIVoicePlugin(MaiBotPlugin):
             mode, voice_key, len(text), len(style_instruction))
 
         # 语言处理:仅支持 日语(LLM翻译成日语 -> 中文谐音拟合) 与 中文(原样朗读)
-        tts_style = style_instruction
         try:
             self.ctx.logger.info("TTS style_instruction: %s", tts_style[:120])
             if mode == "clone":
                 result = await self.tts_service.synthesize_with_voice_clone(
-                    text=text, reference_audio_base64=ref_audio, style_instruction=tts_style,
+                    text=tts_text, reference_audio_base64=ref_audio, style_instruction=tts_style,
                 )
             elif mode == "design":
                 result = await self.tts_service.synthesize_with_design(
-                    text=text, design_prompt=voice_key, style_instruction=tts_style,
+                    text=tts_text, design_prompt=voice_key, style_instruction=tts_style,
                 )
             else:
                 result = await self.tts_service.synthesize_with_preset(
-                    text=text, voice_id=voice_key, style_instruction=tts_style,
+                    text=tts_text, voice_id=voice_key, style_instruction=tts_style,
                 )
 
             # 释放参考音频引用
@@ -420,11 +482,12 @@ class AIVoicePlugin(MaiBotPlugin):
             "使用语音进行回复。当用户要求语音、用户发送了语音消息、或你认为当前场景适合语音回复时调用。\n"
             "必填参数：reply_text（回复文本）、msg_id（当前消息ID）。\n"
             "可选参数：style_instruction（语音风格指令），不传则使用默认音色自然朗读，需要更生动的表达时可填写。\n"
-            "可选参数：reply_language（语音语言），'zh'（中文，默认）或 'en'（英文）。\n\n"
-            "【英文语音】如果你认为本句回复用英文更合适（例如回应外语、模仿海外口吻、营造某种角色感），"
-            "请把 reply_text 直接写成英文原文，并传 reply_language='en'。"
-            "这时音色会按英文描述重新设计（支持英式、美式、日式等不同国家口音），style_instruction 也建议用英文描述语气。\n"
-            "如果不传 reply_language，则按中文音色朗读，请确保 reply_text 为中文。\n\n"
+            "可选参数：reply_language（语音语言），'en'（英文，默认）或 'zh'（中文）。\n\n"
+            "【默认英文语音】当前配置默认使用英文发音（音色按英文描述设计，避免中文破音），"
+            "所以请默认把 reply_text 写成英文原文。只有当用户明确要求中文回复时，"
+            "才传 reply_language='zh' 并把 reply_text 写成中文。"
+            "英文语音支持不同国家口音（英式、美式、日式等），需要特定口音时可以在 style_instruction 中说明，"
+            "style_instruction 建议与 reply_language 保持一致的语言。\n\n"
             "【风格控制】可通过 style_instruction 参数精细控制语音演绎效果，"
             "根据你当前扮演的角色人设和对话情境，主动提供完整的风格描述，让语音更拟人、更有感染力。\n\n"
             "支持三种风格控制方式，可自由组合：\n\n"
@@ -466,10 +529,9 @@ class AIVoicePlugin(MaiBotPlugin):
                 name="reply_language",
                 param_type=ToolParamType.STRING,
                 description=(
-                    "（可选）语音语言：'zh'/'中文'（默认）或 'en'/'英文'。\n"
-                    "选择 'en' 时，reply_text 请直接使用英文原文，"
-                    "音色会按英文描述重新设计（支持英式、美式、日式等不同国家口音），"
-                    "style_instruction 也建议用英文。"
+                    "（可选）语音语言：'en'/'英文'（默认）或 'zh'/'中文'。\n"
+                    "默认请使用英文：reply_text 写英文原文，音色按英文描述设计（支持不同国家口音）。\n"
+                    "仅当用户明确要求中文时传 'zh'，并把 reply_text 写成中文。"
                 ),
                 required=False,
                 default="",
