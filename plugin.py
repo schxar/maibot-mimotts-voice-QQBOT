@@ -1,16 +1,20 @@
 """AI Voice Service Plugin for MaiBot."""
 
-import asyncio
-import base64
 from pathlib import Path
 from typing import Any, Optional
 
-from maibot_sdk import API, CONFIG_RELOAD_SCOPE_SELF, MaiBotPlugin, Tool, Field, PluginConfigBase
+import asyncio
+import base64
+import binascii
+
+from maibot_sdk import API, CONFIG_RELOAD_SCOPE_SELF, Field, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ActivationType, ToolParameterInfo, ToolParamType
 
 try:
+    from .silk_service import audio_to_silk, ensure_ffmpeg_binary
     from .tts_service import MiMoTTSService
 except ImportError:
+    from silk_service import audio_to_silk, ensure_ffmpeg_binary
     from tts_service import MiMoTTSService
 
 
@@ -33,6 +37,10 @@ class VoiceSectionConfig(PluginConfigBase):
     voices_dir: str = Field(default="voices", description="音色目录路径（相对于插件目录）")
     default_voice: str = Field(default="", description="默认音色名称（clone模式下为音频文件名）")
     clone_voice: str = Field(default="", description="复刻音色文件名（clone模式下优先使用）")
+    voice_adapter: str = Field(
+        default="qq_official",
+        description="语音适配器: 'qq_official'(QQ官方机器人,音频自动转silk后上传) 或 'napcat'(NapCat/OneBot v11)",
+    )
 
 
 class VoicePluginConfig(PluginConfigBase):
@@ -48,6 +56,8 @@ class AIVoicePlugin(MaiBotPlugin):
         self.tts_service: Optional[MiMoTTSService] = None
         self.voices: dict[str, str] = {}
         self.default_voice: str = ""
+        self._ffmpeg_path: Optional[str] = None
+        self._ffmpeg_lock = asyncio.Lock()
 
     async def on_load(self) -> None:
         self._ensure_config_exists()
@@ -58,8 +68,8 @@ class AIVoicePlugin(MaiBotPlugin):
         self.tts_service = MiMoTTSService(api_key=api_key, api_base_url=self.config.voice.api_base_url, logger=self.ctx.logger)
         self.default_voice = self.config.voice.default_voice or self.config.voice.clone_voice
         await self._load_voices()
-        self.ctx.logger.info("AI Voice Plugin loaded: mode=%s, default_voice=%s, voices=%s",
-            self.config.voice.voice_mode, self.default_voice, list(self.voices.keys()))
+        self.ctx.logger.info("AI Voice Plugin loaded: mode=%s, default_voice=%s, voices=%s, adapter=%s",
+            self.config.voice.voice_mode, self.default_voice, list(self.voices.keys()), self.config.voice.voice_adapter)
 
     def _ensure_config_exists(self) -> None:
         """如果用户目录下不存在 config.toml，则从 config.example.toml 复制生成。不会覆盖用户已有配置。"""
@@ -157,34 +167,72 @@ class AIVoicePlugin(MaiBotPlugin):
 
         return ""
 
+    async def _ensure_ffmpeg(self) -> Optional[str]:
+        """准备 FFmpeg 可执行文件:查找系统 PATH、插件 bin 目录,最后自动下载。"""
+
+        if self._ffmpeg_path is not None:
+            return self._ffmpeg_path
+        async with self._ffmpeg_lock:
+            if self._ffmpeg_path is not None:
+                return self._ffmpeg_path
+            bin_dir = Path(__file__).parent / "bin"
+            self._ffmpeg_path = (await ensure_ffmpeg_binary(bin_dir, self.ctx.logger)) or ""
+            return self._ffmpeg_path or None
+
     async def _send_voice(self, audio_b64: str, stream_id: str) -> bool:
-        """Send voice message using base64 format.
-        注意: 调用后 audio_b64 会被消费，不再可用。
-        """
-        self.ctx.logger.info("Sending voice to stream=%s, b64_len=%d", stream_id, len(audio_b64))
+        """按语音适配器配置发送语音音频,成功返回 True。"""
+
+        adapter = (self.config.voice.voice_adapter or "qq_official").strip().lower()
+        if adapter == "qq_official":
+            return await self._send_voice_qq_official(audio_b64, stream_id)
+        if adapter == "napcat":
+            return await self._send_voice_napcat(audio_b64, stream_id)
+        self.ctx.logger.error("不支持的语音适配器配置: %s (可选 qq_official / napcat)", adapter)
+        return False
+
+    async def _send_voice_qq_official(self, audio_b64: str, stream_id: str) -> bool:
+        """发送 QQ 官方机器人语音:先转 silk,再以 voice 段交给官方适配器上传。"""
+
+        self.ctx.logger.info("Sending QQ official voice to stream=%s, b64_len=%d", stream_id, len(audio_b64))
+        try:
+            audio_bytes = base64.b64decode(audio_b64)
+        except (binascii.Error, ValueError) as exc:
+            self.ctx.logger.error("音频 base64 解析失败: %s", exc)
+            return False
+
+        ffmpeg_path = await self._ensure_ffmpeg()
+        try:
+            silk_bytes = await audio_to_silk(audio_bytes, ffmpeg_path)
+        except Exception as exc:
+            self.ctx.logger.error(f"音频转 silk 失败: {exc}", exc_info=True)
+            return False
+
+        silk_b64 = base64.b64encode(silk_bytes).decode("ascii")
+        self.ctx.logger.info("QQ official voice converted: silk_len=%dKB", len(silk_bytes) // 1024)
+
+        sent = await self.ctx.send.custom("voice", silk_b64, stream_id)
+        if not sent:
+            self.ctx.logger.error("QQ 官方语音发送失败: voice 段未送达, stream=%s", stream_id)
+            return False
+        self.ctx.logger.info("QQ official voice sent via voice segment, stream=%s", stream_id)
+        return True
+
+    async def _send_voice_napcat(self, audio_b64: str, stream_id: str) -> bool:
+        """发送 NapCat 语音:使用 OneBot v11 的 record 段 + base64 文件。"""
+
+        self.ctx.logger.info("Sending NapCat voice to stream=%s, b64_len=%d", stream_id, len(audio_b64))
 
         b64_url = f"base64://{audio_b64}"
-        # 原始引用可以释放（如果调用方已 del 则无额外效果，但作为安全措施）
-        audio_b64 = ""
-
-        # Method 1: record type with base64 (NapCat standard for voice)
         try:
-            await self.ctx.send.custom("record", {"file": b64_url}, stream_id)
-            self.ctx.logger.info("Sent via record+base64")
-            return True
-        except Exception as e:
-            self.ctx.logger.warning("record+base64 failed: %s", e)
-
-        # Method 2: voice type with base64
-        try:
-            await self.ctx.send.custom("voice", {"file": b64_url}, stream_id)
-            self.ctx.logger.info("Sent via voice+base64")
-            return True
-        except Exception as e:
-            self.ctx.logger.warning("voice+base64 failed: %s", e)
-
-        self.ctx.logger.error("All voice send methods failed")
-        return False
+            sent = await self.ctx.send.custom("record", {"file": b64_url}, stream_id)
+        except Exception as exc:
+            self.ctx.logger.warning("record+base64 发送异常: %s", exc)
+            sent = False
+        if not sent:
+            self.ctx.logger.error("NapCat 语音发送失败: record+base64 未送达, stream=%s", stream_id)
+            return False
+        self.ctx.logger.info("NapCat voice sent via record+base64, stream=%s", stream_id)
+        return True
 
     def _resolve_voice(self, voice_name: str) -> tuple[str, str, str]:
         """解析音色名称，返回 (voice_key, audio_base64, mode)。
@@ -262,8 +310,12 @@ class AIVoicePlugin(MaiBotPlugin):
                 # 立即从 result 中移除大字段，避免双重内存占用
                 result.pop("audio_base64", None)
 
-                await self._send_voice(audio_b64, stream_id)
+                sent = await self._send_voice(audio_b64, stream_id)
                 audio_b64 = ""
+                if not sent:
+                    result["success"] = False
+                    result["error"] = "语音发送失败,请查看插件日志"
+                    self.ctx.logger.error("TTS synthesized but voice send failed: stream=%s", stream_id)
             elif audio_b64:
                 # 不需要发送时也清理
                 result.pop("audio_base64", None)
@@ -336,7 +388,7 @@ class AIVoicePlugin(MaiBotPlugin):
         """Send voice reply asynchronously."""
         try:
             result = await self.voice_clone_tts(text=text, style_instruction=style_instruction, stream_id=stream_id, voice_name=voice_name)
-            self.ctx.logger.info("Async voice reply result: %s", result.get("success"))
+            self.ctx.logger.info("Async voice reply result: success=%s, error=%s", result.get("success"), result.get("error", ""))
         except Exception as e:
             self.ctx.logger.error("Async voice reply failed: %s", e)
 

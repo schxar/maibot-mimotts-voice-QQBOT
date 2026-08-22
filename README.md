@@ -25,8 +25,10 @@ git clone https://github.com/Emilia-awa/maibot-mimotts-voice.git
 ### 2. 安装依赖
 
 ```bash
-pip install aiohttp
+pip install -r requirements.txt
 ```
+
+（或手动安装：`pip install aiohttp graiax-silkcoder`；`graiax-silkcoder` 提供 SILK 编码器，QQ 官方机器人语音消息需要 silk 格式。）
 
 ### 3. 配置
 
@@ -44,6 +46,7 @@ voice_mode = "preset"
 preset_voice = "冰糖"
 voices_dir = "voices"
 clone_voice = ""
+voice_adapter = "qq_official"
 ```
 
 ### 4. 重启 MaiBot
@@ -60,6 +63,14 @@ clone_voice = ""
 | `preset_voice` | 预置音色名称（preset 模式） | `mimo_default` |
 | `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
 | `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
+| `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
+
+### 语音适配器说明
+
+- **`qq_official`（QQ 官方机器人）**：语音发送前会把合成音频统一转换为腾讯 silk 格式（通过 FFmpeg 重采样 + SILK 编码器），再交由官方适配器上传并发送，适配 QQ 官方富媒体消息格式。
+- **`napcat`（NapCat/OneBot v11）**：使用 OneBot v11 的 `record` 段 + `base64://` 发送。
+
+FFmpeg 查找顺序为：系统 PATH → 插件目录 `bin/` → 自动下载。系统未安装 FFmpeg 时，插件会从受信 HTTPS 源自动下载静态构建到 `bin/` 目录（Windows / Linux），无需手动安装。
 
 ### API 地址
 
@@ -148,6 +159,7 @@ AI 在文本任意位置用括号标注语气/情绪/声音动作：
 maibot-mimotts-voice/
 ├── plugin.py           # 插件主入口
 ├── tts_service.py      # MiMo TTS 服务封装
+├── silk_service.py     # SILK 音频转换与 FFmpeg 管理
 ├── config.toml         # 插件配置（gitignored）
 ├── config.example.toml # 配置示例
 ├── _manifest.json      # 插件清单
@@ -155,10 +167,18 @@ maibot-mimotts-voice/
 ├── LICENSE             # MIT 许可证
 ├── .gitignore          # Git 忽略规则
 ├── requirements.txt    # Python 依赖
-└── voices/             # 音色复刻文件目录（gitignored）
+├── voices/             # 音色复刻文件目录（gitignored）
+└── bin/                # 自动下载的 FFmpeg（gitignored）
 ```
 
 ## 更新日志
+
+### v1.7.0
+
+- 🐧 **QQ 官方机器人支持**：新增 `voice_adapter` 配置，可切换 `qq_official`（官方机器人）与 `napcat`（OneBot v11）两种语音发送方式
+- 🔊 **SILK 转换**：官方机器人语音自动转码为腾讯 silk 格式后上传，适配 QQ 官方富媒体消息
+- 📦 **FFmpeg 自动下载**：系统无 FFmpeg 时自动从受信 HTTPS 源下载静态构建到插件 `bin/` 目录
+- 🐛 **错误暴露修复**：发送失败不再静默返回成功，插件日志会记录真实发送结果
 
 ### v1.6.0
 

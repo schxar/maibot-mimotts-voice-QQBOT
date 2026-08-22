@@ -1,0 +1,11 @@
+# 插件本地配置与音色样本
+config.toml
+config_back*
+voices/
+
+# 自动下载的 FFmpeg
+bin/
+
+# Python
+__pycache__/
+*.pyc
