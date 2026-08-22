@@ -48,7 +48,11 @@ class VoiceSectionConfig(PluginConfigBase):
     clone_voice: str = Field(default="", description="复刻音色文件名（clone模式下优先使用）")
     design_voice: str = Field(
         default="一位年轻女性,温柔甜美的声音,像在耳边轻声说话",
-        description="音色设计模式的一句话描述（仅voice_mode=design时生效,可包含口音/年龄/气质/录音质感等）",
+        description="音色设计模式的一句话中文描述（仅voice_mode=design时生效,可包含口音/年龄/气质/录音质感等）",
+    )
+    design_voice_en: str = Field(
+        default="A sweet young woman with a soft clear voice, gentle and a little playful, like whispering in a lover's ear.",
+        description="音色设计模式的一句话英文描述（/tts +英文 时使用,支持不同国家口音）",
     )
     voice_adapter: str = Field(
         default="qq_official",
@@ -68,15 +72,16 @@ class AIVoicePlugin(MaiBotPlugin):
 
     TTS_HELP_TEXT = (
         "语音命令 /tts 用法:\n"
-        "  /tts 说话内容+语气\n"
+        "  /tts 说话内容+语气+语言\n"
         "  /tts help\n\n"
-        "参数用 + 分隔(也支持 | 或全角＋),共 2 段:\n"
+        "参数用 + 分隔(也支持 | 或全角＋),共 3 段(语言可省略):\n"
         "  1. 说话内容  要朗读的文字,如:(轻笑)你好呀~\n"
-        "  2. 语气      风格描述,如:温柔甜蜜的恋人语气,语速稍慢\n\n"
+        "  2. 语气      风格描述,如:温柔甜蜜的恋人语气,语速稍慢\n"
+        "  3. 语言      可选,中文(默认)或 英文;英文时音色按英文描述设计,支持不同国家口音\n\n"
         "发送目标为当前会话的发送者(默认发回给输入命令的人)。\n"
         "示例:\n"
-        "  /tts 你好呀~(温柔甜蜜的恋人语气,带点撒娇)\n"
-        "  /tts 不用谢啦+活泼俏皮,语速偏快"
+        "  /tts 你好呀~+温柔甜蜜的恋人语气\n"
+        "  /tts Hello there!+bright and cheerful+English"
     )
 
     def __init__(self) -> None:
@@ -280,7 +285,7 @@ class AIVoicePlugin(MaiBotPlugin):
         self.ctx.logger.info("NapCat voice sent via record+base64, stream=%s", stream_id)
         return True
 
-    def _resolve_voice(self, voice_name: str) -> tuple[str, str, str]:
+    def _resolve_voice(self, voice_name: str, voice_language: str = "") -> tuple[str, str, str]:
         """解析音色名称，返回 (voice_key, audio_base64, mode)。
         mode: 'clone' 使用音色复刻, 'preset' 使用预置音色。
         """
@@ -312,11 +317,12 @@ class AIVoicePlugin(MaiBotPlugin):
 
         # design 模式:音色描述即音色来源,无需参考音频
         if voice_mode == "design":
-            design_prompt = (
-                voice_name.strip()
-                if voice_name and voice_name != "default"
-                else (self.config.voice.design_voice or "").strip()
-            )
+            if voice_name and voice_name != "default":
+                design_prompt = voice_name.strip()
+            elif str(voice_language or "").strip().lower() in {"英文", "英语", "en", "english"}:
+                design_prompt = (self.config.voice.design_voice_en or self.config.voice.design_voice or "").strip()
+            else:
+                design_prompt = (self.config.voice.design_voice or "").strip()
             if not design_prompt:
                 self.ctx.logger.error("design 模式缺少音色描述,请在 config.toml 的 design_voice 中填写一句话描述。")
                 return "", "", ""
@@ -333,6 +339,7 @@ class AIVoicePlugin(MaiBotPlugin):
         style_instruction: str = "",
         stream_id: str = "",
         voice_name: str = "",
+        voice_language: str = "",
     ) -> dict[str, Any]:
         if not self.tts_service:
             return {"success": False, "error": "TTS service not initialized"}
@@ -340,7 +347,7 @@ class AIVoicePlugin(MaiBotPlugin):
         if not text or not text.strip():
             return {"success": False, "error": "Empty text"}
 
-        voice_key, ref_audio, mode = self._resolve_voice(voice_name)
+        voice_key, ref_audio, mode = self._resolve_voice(voice_name, voice_language)
         if not voice_key:
             return {"success": False, "error": "No voice configured. Check voice config."}
 
@@ -412,7 +419,12 @@ class AIVoicePlugin(MaiBotPlugin):
         detailed_description=(
             "使用语音进行回复。当用户要求语音、用户发送了语音消息、或你认为当前场景适合语音回复时调用。\n"
             "必填参数：reply_text（回复文本）、msg_id（当前消息ID）。\n"
-            "可选参数：style_instruction（语音风格指令），不传则使用默认音色自然朗读，需要更生动的表达时可填写。\n\n"
+            "可选参数：style_instruction（语音风格指令），不传则使用默认音色自然朗读，需要更生动的表达时可填写。\n"
+            "可选参数：reply_language（语音语言），'zh'（中文，默认）或 'en'（英文）。\n\n"
+            "【英文语音】如果你认为本句回复用英文更合适（例如回应外语、模仿海外口吻、营造某种角色感），"
+            "请把 reply_text 直接写成英文原文，并传 reply_language='en'。"
+            "这时音色会按英文描述重新设计（支持英式、美式、日式等不同国家口音），style_instruction 也建议用英文描述语气。\n"
+            "如果不传 reply_language，则按中文音色朗读，请确保 reply_text 为中文。\n\n"
             "【风格控制】可通过 style_instruction 参数精细控制语音演绎效果，"
             "根据你当前扮演的角色人设和对话情境，主动提供完整的风格描述，让语音更拟人、更有感染力。\n\n"
             "支持三种风格控制方式，可自由组合：\n\n"
@@ -450,19 +462,39 @@ class AIVoicePlugin(MaiBotPlugin):
                 required=False,
                 default="",
             ),
+            ToolParameterInfo(
+                name="reply_language",
+                param_type=ToolParamType.STRING,
+                description=(
+                    "（可选）语音语言：'zh'/'中文'（默认）或 'en'/'英文'。\n"
+                    "选择 'en' 时，reply_text 请直接使用英文原文，"
+                    "音色会按英文描述重新设计（支持英式、美式、日式等不同国家口音），"
+                    "style_instruction 也建议用英文。"
+                ),
+                required=False,
+                default="",
+            ),
         ],
     )
-    async def send_voice_reply(self, reply_text: str, msg_id: str = "", style_instruction: str = "", **kwargs: Any) -> dict[str, Any]:
+    async def send_voice_reply(
+        self,
+        reply_text: str,
+        msg_id: str = "",
+        style_instruction: str = "",
+        reply_language: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         # Find the correct stream_id
         stream_id = await self._find_stream_id(kwargs)
         if not stream_id:
             self.ctx.logger.error("Cannot find stream_id for msg_id=%s, kwargs_keys=%s", msg_id, list(kwargs.keys()))
             return {"success": False, "method": "voice", "error": "Cannot find chat stream"}
 
-        self.ctx.logger.info("Using stream_id=%s for voice reply, text_len=%d", stream_id, len(reply_text))
+        voice_language = str(reply_language or kwargs.get("reply_language") or "").strip()
+        self.ctx.logger.info("Using stream_id=%s for voice reply, text_len=%d, language=%s", stream_id, len(reply_text), voice_language or "zh")
 
         # Always use the configured default voice
-        asyncio.create_task(self._async_voice_reply(reply_text, style_instruction, stream_id, ""))
+        asyncio.create_task(self._async_voice_reply(reply_text, style_instruction, stream_id, "", voice_language))
         return {"success": True, "method": "voice", "error": ""}
 
     @Command(
@@ -487,18 +519,30 @@ class AIVoicePlugin(MaiBotPlugin):
 
         speech_text = parts[0]
         tone = parts[1]
+        voice_language = ""
+        if len(parts) > 2 and parts[2]:
+            # 语言段:英文(设计音色用英文描述,支持不同国家口音)/ 中文(默认);其它值忽略
+            normalized_language = parts[2].strip().lower()
+            if normalized_language in {"英文", "英语", "en", "english"}:
+                voice_language = "en"
+            elif normalized_language in {"中文", "普通话", "zh", "cn"}:
+                voice_language = "zh"
 
         if not stream_id:
             error_text = "找不到当前会话,无法发送语音。"
             await self._reply_text_in_stream(error_text, stream_id)
             return True, error_text, 2
 
-        self.ctx.logger.info(f"/tts 命令: stream={stream_id} text_len={len(speech_text)} tone_len={len(tone)}")
+        self.ctx.logger.info(
+            f"/tts 命令: stream={stream_id} lang={voice_language or 'zh'} "
+            f"text_len={len(speech_text)} tone_len={len(tone)}"
+        )
         try:
             result = await self.voice_clone_tts(
                 text=speech_text,
                 style_instruction=tone,
                 stream_id=stream_id,
+                voice_language=voice_language,
             )
         except Exception as exc:
             self.ctx.logger.error(f"/tts 语音生成失败: {exc}", exc_info=True)
@@ -549,10 +593,23 @@ class AIVoicePlugin(MaiBotPlugin):
         except Exception as exc:
             self.ctx.logger.warning(f"/tts 回复文本发送失败: {exc}")
 
-    async def _async_voice_reply(self, text: str, style_instruction: str, stream_id: str, voice_name: str) -> None:
+    async def _async_voice_reply(
+        self,
+        text: str,
+        style_instruction: str,
+        stream_id: str,
+        voice_name: str,
+        voice_language: str = "",
+    ) -> None:
         """Send voice reply asynchronously."""
         try:
-            result = await self.voice_clone_tts(text=text, style_instruction=style_instruction, stream_id=stream_id, voice_name=voice_name)
+            result = await self.voice_clone_tts(
+                text=text,
+                style_instruction=style_instruction,
+                stream_id=stream_id,
+                voice_name=voice_name,
+                voice_language=voice_language,
+            )
             self.ctx.logger.info("Async voice reply result: success=%s, error=%s", result.get("success"), result.get("error", ""))
         except Exception as e:
             self.ctx.logger.error("Async voice reply failed: %s", e)

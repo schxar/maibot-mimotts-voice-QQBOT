@@ -63,7 +63,8 @@ voice_adapter = "qq_official"
 | `preset_voice` | 预置音色名称（preset 模式） | `mimo_default` |
 | `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
 | `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
-| `design_voice` | 音色设计模式的一句话描述（design 模式，无需参考音频） | 见 config.example.toml |
+| `design_voice` | 音色设计模式的一句话中文描述（design 模式，无需参考音频） | 见 config.example.toml |
+| `design_voice_en` | 音色设计模式的一句话英文描述（`/tts +英文` 时使用，不同国家口音） | 见 config.example.toml |
 | `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
 | `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
 | `save_dir` | 语音存档目录（相对于插件目录） | `output` |
@@ -132,27 +133,29 @@ plugins/maibot-mimotts-voice/voices/
 | `reply_text` | string | ✅ | 要合成语音的回复文本 |
 | `msg_id` | string | ✅ | 当前消息 ID，用于自动查找聊天流 |
 | `style_instruction` | string | ❌ | 语音风格指令 |
+| `reply_language` | string | ❌ | 语音语言：`zh`（中文，默认）或 `en`（英文）；选 `en` 时 reply_text 直接写英文原文，音色按英文描述重新设计（支持不同国家口音） |
 
 ## 命令说明
 
 ### `/tts` 手动发送语音
 
 ```
-/tts 说话内容+语气
+/tts 说话内容+语气+语言
 /tts help
 ```
 
-参数用 `+` 分隔（也支持 `|` 或全角`＋`），共 2 段：
+参数用 `+` 分隔（也支持 `|` 或全角`＋`），共 3 段（语言段可省略，默认中文）：
 
 | 段 | 参数 | 说明 |
 |----|------|------|
 | 1 | 说话内容 | 要朗读的文字，如 `(轻笑)你好呀~` |
 | 2 | 语气 | 风格描述，如 `温柔甜蜜的恋人语气,语速稍慢` |
+| 3 | 语言 | 可选：`中文`（默认）或 `英文`；英文时音色描述使用 `design_voice_en`，支持设计不同国家口音 |
 
 示例：
 
-- `/tts （轻笑）不用谢啦~快趁热吃吧+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者
-- `/tts 你好呀+活泼俏皮,语速偏快` ← 发回给发送者
+- `/tts （轻笑）不用谢啦~快趁热吃吧+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者（中文）
+- `/tts Hello there!+bright and cheerful+英文` ← 发回给发送者（英文口音音色）
 - `/tts help` ← 查看完整用法
 
 语音默认发回当前会话的发送者（用 `voice_adapter` 配置选择 QQ 官方机器人或 NapCat 发送方式）。
@@ -222,6 +225,10 @@ maibot-mimotts-voice/
 ```
 
 ## 更新日志
+
+### v1.7.5
+
+- 🇬🇧 **英文音色设计**：`/tts` 新增第三段 `+英文` 参数，音色按 `design_voice_en` 英文描述设计（支持不同国家口音），中英文描述可自由切换
 
 ### v1.7.4
 
