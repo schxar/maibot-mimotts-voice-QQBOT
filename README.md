@@ -63,11 +63,11 @@ voice_adapter = "qq_official"
 | `preset_voice` | 预置音色名称（preset 模式） | `mimo_default` |
 | `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
 | `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
-| `design_voice` | 音色设计模式的一句话中文描述（design 模式，无需参考音频） | 见 config.example.toml |
-| `design_voice_en` | 音色设计模式的一句话英文描述（默认英文时使用，不同国家口音） | 见 config.example.toml |
-| `voice_language` | 默认语音语言：`en`（英文，默认）或 `zh`（中文）；`/tts` 第三段与工具 `reply_language` 可临时覆盖 | `en` |
-| `auto_translate` | 语言为英文时，若文本/风格/音色描述含中文，自动调用 LLM 翻译为英文再合成 | `true` |
+| `design_voice` | 音色设计模式的一句话中文描述（design 模式，缺少英文描述时自动翻译） | 见 config.example.toml |
+| `design_voice_en` | 音色设计模式的一句话英文描述（固定英文发音，支持不同国家口音） | 见 config.example.toml |
 | `llm_task` | 自动翻译使用的模型任务名（如 `replyer`/`planner`/`utils`），需与主程序 `model_config.toml` 的任务名一致 | `replyer` |
+
+语音固定为英文发音：文本、风格指令或音色描述中含中文的内容会自动调用主程序 LLM 翻译成英文后再合成，避免中文炸音。
 | `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
 | `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
 | `save_dir` | 语音存档目录（相对于插件目录） | `output` |
@@ -143,25 +143,24 @@ plugins/maibot-mimotts-voice/voices/
 ### `/tts` 手动发送语音
 
 ```
-/tts 说话内容+语气+语言
+/tts 说话内容+语气
 /tts help
 ```
 
-参数用 `+` 分隔（也支持 `|` 或全角`＋`），共 3 段（语言段可省略，默认中文）：
+参数用 `+` 分隔（也支持 `|` 或全角`＋`），共 2 段：
 
 | 段 | 参数 | 说明 |
 |----|------|------|
-| 1 | 说话内容 | 要朗读的文字，如 `(轻笑)你好呀~` |
-| 2 | 语气 | 风格描述，如 `温柔甜蜜的恋人语气,语速稍慢` |
-| 3 | 语言 | 可选：`中文`（默认）或 `英文`；英文时音色描述使用 `design_voice_en`，支持设计不同国家口音 |
+| 1 | 说话内容 | 要朗读的文字，英文效果最佳；中文会自动翻译成英文再朗读 |
+| 2 | 语气 | 风格描述，如 `gentle sweet tone, slightly slower` |
 
 示例：
 
-- `/tts （轻笑）不用谢啦~快趁热吃吧+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者（中文）
-- `/tts Hello there!+bright and cheerful+英文` ← 发回给发送者（英文口音音色）
+- `/tts No need to thank me~+gentle sweet tone, a little clingy` ← 发回给发送者
+- `/tts 不用谢啦~+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者（自动翻译为英文）
 - `/tts help` ← 查看完整用法
 
-语音默认发回当前会话的发送者（用 `voice_adapter` 配置选择 QQ 官方机器人或 NapCat 发送方式）。
+语音固定为英文发音（中文内容自动翻译），默认发回当前会话的发送者。
 
 ### 端到端测试脚本
 
@@ -228,6 +227,10 @@ maibot-mimotts-voice/
 ```
 
 ## 更新日志
+
+### v1.7.8
+
+- 🔒 **强制英文**：语音固定英文发音,移除语言切换;文本/风格/音色描述含中文一律自动翻译为英文后合成,禁止中文朗读
 
 ### v1.7.7
 
