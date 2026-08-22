@@ -59,11 +59,16 @@ voice_adapter = "qq_official"
 |--------|------|--------|
 | `mimo_api_key` | MiMo API Key（必填） | - |
 | `api_base_url` | API 地址 | `https://token-plan-cn.xiaomimimo.com/v1` |
-| `voice_mode` | 音色模式：`preset` 或 `clone` | `preset` |
+| `voice_mode` | 音色模式：`preset`、`clone` 或 `design` | `preset` |
 | `preset_voice` | 预置音色名称（preset 模式） | `mimo_default` |
 | `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
 | `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
+| `design_voice` | 音色设计模式的一句话描述（design 模式，无需参考音频） | 见 config.example.toml |
 | `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
+| `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
+| `save_dir` | 语音存档目录（相对于插件目录） | `output` |
+
+语音按原文（中文）直接朗读，风格提示由 AI 自行决定。
 
 ### 语音适配器说明
 
@@ -97,6 +102,16 @@ FFmpeg 查找顺序为：系统 PATH → 插件目录 `bin/` → 自动下载。
 | `Milo` | 英文 | 男性 |
 | `Dean` | 英文 | 男性 |
 
+### 音色设计（design）
+
+无需任何参考音频，在 `design_voice` 里写一句话描述即可凭空生成全新音色（支持年龄、性别、口音、音色、语速、气质、录音质感等任意维度）：
+
+```
+design_voice = "一位青春甜美的少女,声音清甜软糯,语调温柔,带有微微的撒娇和亲密感,像在恋人耳边轻声呢喃"
+```
+
+每次合成时，语音风格指令（`style_instruction`）还会自动并入音色描述，用于指导语气与情绪。`voice_mode = "design"` 时忽略 `voices/` 目录与预置音色配置。
+
 ### 音色复刻（clone）
 
 1. 将 `voice_mode` 改为 `clone`
@@ -117,6 +132,41 @@ plugins/maibot-mimotts-voice/voices/
 | `reply_text` | string | ✅ | 要合成语音的回复文本 |
 | `msg_id` | string | ✅ | 当前消息 ID，用于自动查找聊天流 |
 | `style_instruction` | string | ❌ | 语音风格指令 |
+
+## 命令说明
+
+### `/tts` 手动发送语音
+
+```
+/tts 说话内容+语气
+/tts help
+```
+
+参数用 `+` 分隔（也支持 `|` 或全角`＋`），共 2 段：
+
+| 段 | 参数 | 说明 |
+|----|------|------|
+| 1 | 说话内容 | 要朗读的文字，如 `(轻笑)你好呀~` |
+| 2 | 语气 | 风格描述，如 `温柔甜蜜的恋人语气,语速稍慢` |
+
+示例：
+
+- `/tts （轻笑）不用谢啦~快趁热吃吧+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者
+- `/tts 你好呀+活泼俏皮,语速偏快` ← 发回给发送者
+- `/tts help` ← 查看完整用法
+
+语音默认发回当前会话的发送者（用 `voice_adapter` 配置选择 QQ 官方机器人或 NapCat 发送方式）。
+
+### 端到端测试脚本
+
+`test_send_voice.py` 可直接验证完整链路（MiMo 合成 → silk 转换 → QQ 官方 OpenAPI 上传与发送），
+运行方式（使用 MaiBot 的 python 环境）：
+
+```bash
+python test_send_voice.py [目标OpenID] [回复文本]
+```
+
+默认目标为 665833726E2795DB835D8C68192918D4。注意该脚本会真实调用 MiMo API 并向 QQ 发送语音。
 
 ### 风格控制方式
 
@@ -173,12 +223,33 @@ maibot-mimotts-voice/
 
 ## 更新日志
 
+### v1.7.4
+
+- 🎨 **音色设计模式**：新增 `voice_mode = "design"`，无需参考音频，一句话描述即可生成全新音色（MiMo-V2.5-TTS-VoiceDesign），风格指令自动并入音色描述
+- ⚙️ 新增 `design_voice` 配置项，测试脚本与配置模板同步支持 design 模式
+
+### v1.7.3
+
+- ✂️ **移除多语言与 LLM 翻译**：取消日语谐音拟合与 AI 翻译，语音按原文（中文）直接朗读
+- 💬 **/tts 命令简化**：只保留 `说话内容+语气` 两段参数，默认发回给输入命令的人
+
+### v1.7.2
+
+- 🌏 **日语谐音拟合**：日文文本先转读音再映射为读音相近的中文字（如 `こんにちは` → `阔恩妮七哈`），交给 MiMo 用参考音色朗读出近似日语
+- ✂️ **移除其它多语言支持**：仅保留中文（原样朗读）与日语（谐音拟合），英语/韩语等不再支持
+
+### v1.7.1
+
+- 🐛 **能力授权修复**：插件清单补充 `llm.generate`、`llm.get_available_models` 与 `chat.*` 会话解析能力声明，修复翻译与 `/tts` 目标解析被 Host 拒绝的问题
+
 ### v1.7.0
 
 - 🐧 **QQ 官方机器人支持**：新增 `voice_adapter` 配置，可切换 `qq_official`（官方机器人）与 `napcat`（OneBot v11）两种语音发送方式
 - 🔊 **SILK 转换**：官方机器人语音自动转码为腾讯 silk 格式后上传，适配 QQ 官方富媒体消息
 - 📦 **FFmpeg 自动下载**：系统无 FFmpeg 时自动从受信 HTTPS 源下载静态构建到插件 `bin/` 目录
 - 🐛 **错误暴露修复**：发送失败不再静默返回成功，插件日志会记录真实发送结果
+- 🗂️ **语音本地存档**：生成与发送的音频（wav/silk）自动存档到 `output/` 目录
+- 💬 **/tts 命令**：向指定的官方 OpenID 或 OneBot QQ 号手动发送语音，省略目标时默认私聊发给发送者，支持 `--lang` 临时指定语言
 
 ### v1.6.0
 

@@ -1,13 +1,22 @@
 """AI Voice Service Plugin for MaiBot."""
 
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import asyncio
 import base64
 import binascii
 
-from maibot_sdk import API, CONFIG_RELOAD_SCOPE_SELF, Field, MaiBotPlugin, PluginConfigBase, Tool
+from maibot_sdk import (
+    API,
+    CONFIG_RELOAD_SCOPE_SELF,
+    Command,
+    Field,
+    MaiBotPlugin,
+    PluginConfigBase,
+    Tool,
+)
 from maibot_sdk.types import ActivationType, ToolParameterInfo, ToolParamType
 
 try:
@@ -32,15 +41,21 @@ class VoiceSectionConfig(PluginConfigBase):
         description="MiMo API地址",
         json_schema_extra={"label": "API地址"},
     )
-    voice_mode: str = Field(default="clone", description="语音模式: 'clone'(音色复刻) 或 'preset'(预置音色)")
+    voice_mode: str = Field(default="clone", description="语音模式: 'clone'(音色复刻) / 'preset'(预置音色) / 'design'(音色设计,一句话描述生成音色)")
     preset_voice: str = Field(default="mimo_default", description="预置音色ID（仅preset模式生效）")
     voices_dir: str = Field(default="voices", description="音色目录路径（相对于插件目录）")
     default_voice: str = Field(default="", description="默认音色名称（clone模式下为音频文件名）")
     clone_voice: str = Field(default="", description="复刻音色文件名（clone模式下优先使用）")
+    design_voice: str = Field(
+        default="一位年轻女性,温柔甜美的声音,像在耳边轻声说话",
+        description="音色设计模式的一句话描述（仅voice_mode=design时生效,可包含口音/年龄/气质/录音质感等）",
+    )
     voice_adapter: str = Field(
         default="qq_official",
         description="语音适配器: 'qq_official'(QQ官方机器人,音频自动转silk后上传) 或 'napcat'(NapCat/OneBot v11)",
     )
+    save_audio: bool = Field(default=True, description="是否把生成与发送的语音存档到本地")
+    save_dir: str = Field(default="output", description="语音存档目录(相对于插件目录)")
 
 
 class VoicePluginConfig(PluginConfigBase):
@@ -50,6 +65,19 @@ class VoicePluginConfig(PluginConfigBase):
 
 class AIVoicePlugin(MaiBotPlugin):
     config_model = VoicePluginConfig
+
+    TTS_HELP_TEXT = (
+        "语音命令 /tts 用法:\n"
+        "  /tts 说话内容+语气\n"
+        "  /tts help\n\n"
+        "参数用 + 分隔(也支持 | 或全角＋),共 2 段:\n"
+        "  1. 说话内容  要朗读的文字,如:(轻笑)你好呀~\n"
+        "  2. 语气      风格描述,如:温柔甜蜜的恋人语气,语速稍慢\n\n"
+        "发送目标为当前会话的发送者(默认发回给输入命令的人)。\n"
+        "示例:\n"
+        "  /tts 你好呀~(温柔甜蜜的恋人语气,带点撒娇)\n"
+        "  /tts 不用谢啦+活泼俏皮,语速偏快"
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -167,6 +195,23 @@ class AIVoicePlugin(MaiBotPlugin):
 
         return ""
 
+    def _save_audio_bytes(self, audio_bytes: bytes, prefix: str, suffix: str, voice_key: str) -> Optional[str]:
+        """把音频字节写入本地存档目录,返回文件路径;失败仅记录日志。"""
+
+        if not self.config.voice.save_audio:
+            return None
+        save_dir = Path(__file__).parent / (self.config.voice.save_dir or "output")
+        try:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_path = save_dir / f"{prefix}_{timestamp}_{voice_key or 'default'}.{suffix}"
+            file_path.write_bytes(audio_bytes)
+            self.ctx.logger.info("语音已存档: %s (%dKB)", file_path, len(audio_bytes) // 1024)
+            return str(file_path)
+        except OSError as exc:
+            self.ctx.logger.warning(f"语音存档失败: {exc}")
+            return None
+
     async def _ensure_ffmpeg(self) -> Optional[str]:
         """准备 FFmpeg 可执行文件:查找系统 PATH、插件 bin 目录,最后自动下载。"""
 
@@ -207,6 +252,7 @@ class AIVoicePlugin(MaiBotPlugin):
             self.ctx.logger.error(f"音频转 silk 失败: {exc}", exc_info=True)
             return False
 
+        self._save_audio_bytes(silk_bytes, "tts_silk", "silk", "official")
         silk_b64 = base64.b64encode(silk_bytes).decode("ascii")
         self.ctx.logger.info("QQ official voice converted: silk_len=%dKB", len(silk_bytes) // 1024)
 
@@ -264,12 +310,30 @@ class AIVoicePlugin(MaiBotPlugin):
             self.ctx.logger.error("No voices loaded! Please put .wav/.mp3 files in the voices/ directory.")
             return "", "", ""
 
+        # design 模式:音色描述即音色来源,无需参考音频
+        if voice_mode == "design":
+            design_prompt = (
+                voice_name.strip()
+                if voice_name and voice_name != "default"
+                else (self.config.voice.design_voice or "").strip()
+            )
+            if not design_prompt:
+                self.ctx.logger.error("design 模式缺少音色描述,请在 config.toml 的 design_voice 中填写一句话描述。")
+                return "", "", ""
+            return design_prompt, "", "design"
+
         # preset 模式
         preset_id = voice_key or self.config.voice.preset_voice or "mimo_default"
         return preset_id, "", "preset"
 
     @API("voice_clone_tts", description="TTS with specified voice", version="1", public=True)
-    async def voice_clone_tts(self, text: str, style_instruction: str = "", stream_id: str = "", voice_name: str = "") -> dict[str, Any]:
+    async def voice_clone_tts(
+        self,
+        text: str,
+        style_instruction: str = "",
+        stream_id: str = "",
+        voice_name: str = "",
+    ) -> dict[str, Any]:
         if not self.tts_service:
             return {"success": False, "error": "TTS service not initialized"}
 
@@ -283,14 +347,21 @@ class AIVoicePlugin(MaiBotPlugin):
         self.ctx.logger.info("TTS request: mode=%s, voice_key=%s, text_len=%d, style_len=%d",
             mode, voice_key, len(text), len(style_instruction))
 
+        # 语言处理:仅支持 日语(LLM翻译成日语 -> 中文谐音拟合) 与 中文(原样朗读)
+        tts_style = style_instruction
         try:
+            self.ctx.logger.info("TTS style_instruction: %s", tts_style[:120])
             if mode == "clone":
                 result = await self.tts_service.synthesize_with_voice_clone(
-                    text=text, reference_audio_base64=ref_audio, style_instruction=style_instruction,
+                    text=text, reference_audio_base64=ref_audio, style_instruction=tts_style,
+                )
+            elif mode == "design":
+                result = await self.tts_service.synthesize_with_design(
+                    text=text, design_prompt=voice_key, style_instruction=tts_style,
                 )
             else:
                 result = await self.tts_service.synthesize_with_preset(
-                    text=text, voice_id=voice_key, style_instruction=style_instruction,
+                    text=text, voice_id=voice_key, style_instruction=tts_style,
                 )
 
             # 释放参考音频引用
@@ -301,21 +372,31 @@ class AIVoicePlugin(MaiBotPlugin):
             audio_b64 = result.get("audio_base64", "")
             self.ctx.logger.info("TTS result: success=%s, audio_len=%d, error=%s", success, len(audio_b64), error)
 
-            if success and audio_b64 and stream_id:
+            if success and audio_b64:
                 # 提取纯 base64 数据
                 if "base64," in audio_b64:
                     audio_b64 = audio_b64.split("base64,", 1)[1]
                     audio_b64 = audio_b64.strip()
 
+                # 合成成功后先存档原始音频到本地,便于排查与复核
+                try:
+                    raw_audio_bytes = base64.b64decode(audio_b64)
+                    self._save_audio_bytes(raw_audio_bytes, "tts", "wav", voice_key)
+                except (binascii.Error, ValueError) as exc:
+                    self.ctx.logger.warning(f"TTS 音频 base64 无效,跳过存档: {exc}")
+
                 # 立即从 result 中移除大字段，避免双重内存占用
                 result.pop("audio_base64", None)
 
-                sent = await self._send_voice(audio_b64, stream_id)
-                audio_b64 = ""
-                if not sent:
-                    result["success"] = False
-                    result["error"] = "语音发送失败,请查看插件日志"
-                    self.ctx.logger.error("TTS synthesized but voice send failed: stream=%s", stream_id)
+                if stream_id:
+                    sent = await self._send_voice(audio_b64, stream_id)
+                    audio_b64 = ""
+                    if not sent:
+                        result["success"] = False
+                        result["error"] = "语音发送失败,请查看插件日志"
+                        self.ctx.logger.error("TTS synthesized but voice send failed: stream=%s", stream_id)
+                else:
+                    audio_b64 = ""
             elif audio_b64:
                 # 不需要发送时也清理
                 result.pop("audio_base64", None)
@@ -383,6 +464,90 @@ class AIVoicePlugin(MaiBotPlugin):
         # Always use the configured default voice
         asyncio.create_task(self._async_voice_reply(reply_text, style_instruction, stream_id, ""))
         return {"success": True, "method": "voice", "error": ""}
+
+    @Command(
+        "tts",
+        description="发送语音: /tts 说话内容+语气;默认发回给发送者;输入 /tts help 查看用法",
+        pattern=r"^/tts(?:\s|$)",
+    )
+    async def handle_tts_command(self, stream_id: str = "", **kwargs: Any) -> Tuple[bool, str, int]:
+        """/tts 命令:按 + 分隔的 说话内容+语气 发送语音,默认发回给当前会话发送者。"""
+
+        raw_text = self._extract_plain_text(kwargs)
+        parts = self._split_tts_args(raw_text)
+
+        # /tts help 或缺少参数时输出用法说明
+        if parts and parts[0].lower() in {"help", "--help", "-h"}:
+            await self._reply_text_in_stream(self.TTS_HELP_TEXT, stream_id)
+            return True, self.TTS_HELP_TEXT, 2
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            reply_text = "缺少说话内容或语气参数。\n\n" + self.TTS_HELP_TEXT
+            await self._reply_text_in_stream(reply_text, stream_id)
+            return True, reply_text, 2
+
+        speech_text = parts[0]
+        tone = parts[1]
+
+        if not stream_id:
+            error_text = "找不到当前会话,无法发送语音。"
+            await self._reply_text_in_stream(error_text, stream_id)
+            return True, error_text, 2
+
+        self.ctx.logger.info(f"/tts 命令: stream={stream_id} text_len={len(speech_text)} tone_len={len(tone)}")
+        try:
+            result = await self.voice_clone_tts(
+                text=speech_text,
+                style_instruction=tone,
+                stream_id=stream_id,
+            )
+        except Exception as exc:
+            self.ctx.logger.error(f"/tts 语音生成失败: {exc}", exc_info=True)
+            error_text = f"语音生成失败: {exc}"
+            await self._reply_text_in_stream(error_text, stream_id)
+            return True, error_text, 2
+
+        if not result.get("success"):
+            error_text = f"语音发送失败: {result.get('error', '未知错误')}"
+            await self._reply_text_in_stream(error_text, stream_id)
+            return True, error_text, 2
+
+        success_text = "语音已发送。"
+        await self._reply_text_in_stream(success_text, stream_id)
+        return True, success_text, 2
+
+    @staticmethod
+    def _extract_plain_text(kwargs: dict) -> str:
+        """从 Command 调用参数中提取消息纯文本。"""
+
+        text = str(kwargs.get("text") or "")
+        message = kwargs.get("message") or {}
+        if not text and isinstance(message, dict):
+            text = str(message.get("plain_text") or message.get("processed_plain_text") or "")
+        return text.strip()
+
+    @staticmethod
+    def _split_tts_args(raw_text: str) -> list[str]:
+        """切分 /tts 参数,返回 说话内容/语气 的段落列表。
+
+        主分隔符为英文 +,同时兼容 | 与全角加号 ＋。
+        """
+
+        if raw_text.startswith("/tts"):
+            raw_text = raw_text[len("/tts"):].strip()
+        if not raw_text:
+            return []
+        normalized_text = raw_text.replace("|", "+").replace("＋", "+")
+        return [part.strip() for part in normalized_text.split("+")]
+
+    async def _reply_text_in_stream(self, text: str, stream_id: str) -> None:
+        """向指定流发送提示文本,失败仅记录日志,不影响命令结果。"""
+
+        if not stream_id:
+            return
+        try:
+            await self.ctx.send.text(text, stream_id)
+        except Exception as exc:
+            self.ctx.logger.warning(f"/tts 回复文本发送失败: {exc}")
 
     async def _async_voice_reply(self, text: str, style_instruction: str, stream_id: str, voice_name: str) -> None:
         """Send voice reply asynchronously."""

@@ -13,6 +13,7 @@ class MiMoTTSService:
     DEFAULT_API_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1"
     MODEL_PRESET = "mimo-v2.5-tts"
     MODEL_CLONE = "mimo-v2.5-tts-voiceclone"
+    MODEL_DESIGN = "mimo-v2.5-tts-voicedesign"
 
     def __init__(self, api_key: str, api_base_url: str = "", logger: Optional[logging.Logger] = None):
         self.api_key = api_key.strip() if api_key else ""
@@ -108,6 +109,58 @@ class MiMoTTSService:
 
         result = await self._do_request(payload, headers)
         del payload, messages, voice_str
+        gc.collect()
+        return result
+
+    async def synthesize_with_design(
+        self,
+        text: str,
+        design_prompt: str,
+        style_instruction: str = "",
+        audio_format: str = "wav",
+    ) -> dict[str, Any]:
+        """使用音色设计模型:无需参考音频,一句话描述生成全新音色并朗读。
+
+        design_prompt 为音色描述(口音/年龄/气质/录音质感等任意维度),
+        style_instruction 非空时会并入音色描述(语气、语速、情绪等表演指导)。
+        """
+
+        if not self.api_key:
+            return {"success": False, "error": "API Key not configured"}
+
+        voice_description = (design_prompt or "").strip()
+        if style_instruction.strip():
+            voice_description = (
+                f"{voice_description}。{style_instruction.strip()}"
+                if voice_description
+                else style_instruction.strip()
+            )
+        if not voice_description:
+            return {"success": False, "error": "Empty design prompt"}
+
+        key_preview = self.api_key[:4] + "****" if len(self.api_key) > 4 else "empty"
+        self.logger.info("Design TTS: url=%s, key=%s", self.api_base_url, key_preview)
+
+        payload = {
+            "model": self.MODEL_DESIGN,
+            "modalities": ["text", "audio"],
+            "messages": [
+                {"role": "user", "content": voice_description},
+                {"role": "assistant", "content": text},
+            ],
+            "audio": {
+                "format": audio_format,
+                "optimize_text_preview": True,
+            },
+        }
+
+        headers = {
+            "api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+
+        result = await self._do_request(payload, headers)
+        del payload
         gc.collect()
         return result
 

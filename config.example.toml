@@ -10,4 +10,7 @@ preset_voice = "mimo_default"
 voices_dir = "voices"
 default_voice = ""
 clone_voice = ""
+design_voice = "一位年轻女性,温柔甜美的声音,像在耳边轻声说话"
 voice_adapter = "qq_official"
+save_audio = true
+save_dir = "output"
