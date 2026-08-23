@@ -14,6 +14,7 @@
 - 🎨 **AI 智能风格控制**：风格指令由 AI 根据角色人设和对话情境自行决定，无需用户手动配置
 - 🎬 **导演模式**：支持从角色、场景、指导三个维度全方位刻画语音表演，AI 自动判断何时需要深度演绎
 - ⚡ **异步发送**：语音合成和发送异步执行，不阻塞 AI 主循环
+- 🚦 **双适配器自动路由**：`voice_adapter = "auto"` 按目标 ID 形态自动选择发送方式——官方机器人 openid 走官方 API（先转 silk），OneBot v11 纯数字 QQ 号把原始 wav 交给 SnowLuma 等链路自行转码，语音时长显示正确
 - 🔧 **自动配置初始化**：首次启动时自动从 `config.example.toml` 生成 `config.toml`，不覆盖用户已有配置
 
 ## 安装
@@ -47,7 +48,7 @@ mimo_api_key = "your_api_key_here"
 api_base_url = "https://token-plan-cn.xiaomimimo.com/v1"
 voice_mode = "design"
 design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear."
-voice_adapter = "qq_official"
+voice_adapter = "auto"
 ```
 
 ### 4. 重启 MaiBot
@@ -67,7 +68,7 @@ voice_adapter = "qq_official"
 | `design_voice_en` | 音色设计模式的一句话英文描述（推荐填写；固定英文发音，支持不同国家口音） | 见 config.example.toml |
 | `design_voice` | 音色设计模式的一句话中文描述（不推荐填写，中文朗读质量差；仅当英文描述为空时兜底，且会先翻译成英文） | 空 |
 | `llm_task` | 自动翻译使用的模型任务名（如 `replyer`/`planner`/`utils`），需与主程序 `model_config.toml` 的任务名一致 | `replyer` |
-| `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
+| `voice_adapter` | 语音适配器：`auto`（默认，按目标 ID 自动路由：官方机器人 openid 含大写字母→先转 silk 后上传；OneBot v11 纯数字 QQ 号→原始音频直接交给适配器/SnowLuma 转码，避免时长被固定为 1 秒） / `qq_official` / `onebot` / `napcat`（旧 record+base64，保留兼容） | `auto` |
 | `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
 | `save_dir` | 语音存档目录（相对于插件目录） | `output` |
 
@@ -75,8 +76,10 @@ voice_adapter = "qq_official"
 
 ### 语音适配器说明
 
-- **`qq_official`（QQ 官方机器人）**：语音发送前会把合成音频统一转换为腾讯 silk 格式（通过 FFmpeg 重采样 + SILK 编码器），再交由官方适配器上传并发送，适配 QQ 官方富媒体消息格式。
-- **`napcat`（NapCat/OneBot v11）**：使用 OneBot v11 的 `record` 段 + `base64://` 发送。
+- **`auto`（默认）**：按聊天流目标 ID 形态自动路由——QQ 官方机器人 openid 必然包含大写字母，自动走 `qq_official`（先转 silk）；OneBot v11 的 QQ 号为纯数字，自动走 `onebot`（原始音频直接交给适配器/SnowLuma 转码，避免 silk 时长元数据被固定为 1 秒的问题）。
+- **`qq_official`（QQ 官方机器人）**：语音发送前会把合成音频统一转换为腾讯 silk 格式（通过 FFmpeg 重采样 + SILK 编码器），再交由官方适配器上传并发送，适配 QQ 官方富媒体消息格式。官方 API 强制要求 silk，无法直接上传 wav。
+- **`onebot`（OneBot v11 / SnowLuma）**：直接以 `voice` 段发送原始合成音频（wav），由 SnowLuma 等链路自行转码为 silk 并计算真实时长。
+- **`napcat`（旧 NapCat 模式，保留兼容）**：使用 OneBot v11 的 `record` 段 + `base64://` 发送。
 
 FFmpeg 查找顺序为：系统 PATH → 插件目录 `bin/` → 自动下载。系统未安装 FFmpeg 时，插件会从受信 HTTPS 源自动下载静态构建到 `bin/` 目录（Windows / Linux），无需手动安装。
 
@@ -231,6 +234,11 @@ maibot-mimotts-voice/
 ```
 
 ## 更新日志
+
+### v1.7.9
+
+- 🚦 **双适配器自动路由**：新增 `voice_adapter = "auto"`（默认），按目标 ID 形态自动选择发送方式——官方机器人 openid（含大写字母）先转 silk 上传，OneBot v11 纯数字 QQ 号把原始 wav 直接交给适配器/SnowLuma 转码，修复 SnowLuma 上语音被显示为 1 秒的问题
+- ➕ 新增 `onebot` 适配器模式（voice 段 + 原始音频），`napcat` 旧模式保留兼容
 
 ### v1.7.8
 

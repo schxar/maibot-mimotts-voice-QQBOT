@@ -7,6 +7,7 @@ from typing import Any, Optional, Tuple
 import asyncio
 import base64
 import binascii
+import re
 
 from maibot_sdk import (
     API,
@@ -73,8 +74,8 @@ class VoiceSectionConfig(PluginConfigBase):
         description="自动翻译使用的模型任务名(如 replyer/planner/utils),需与主程序 model_config.toml 的任务名一致",
     )
     voice_adapter: str = Field(
-        default="qq_official",
-        description="语音适配器: 'qq_official'(QQ官方机器人,音频自动转silk后上传) 或 'napcat'(NapCat/OneBot v11)",
+        default="auto",
+        description="语音适配器: 'auto'(默认,按目标ID自动路由:官方机器人openid含大写字母→转silk;OneBot纯数字QQ号→原始音频交适配器转码) / 'qq_official'(强制官方机器人,先转silk) / 'onebot'(强制OneBot v11,发原始音频) / 'napcat'(旧NapCat record+base64模式,保留兼容)",
     )
     save_audio: bool = Field(default=True, description="是否把生成与发送的语音存档到本地")
     save_dir: str = Field(default="output", description="语音存档目录(相对于插件目录)")
@@ -247,15 +248,66 @@ class AIVoicePlugin(MaiBotPlugin):
             return self._ffmpeg_path or None
 
     async def _send_voice(self, audio_b64: str, stream_id: str) -> bool:
-        """按语音适配器配置发送语音音频,成功返回 True。"""
+        """按语音适配器配置发送语音音频,成功返回 True。
 
-        adapter = (self.config.voice.voice_adapter or "qq_official").strip().lower()
+        auto 模式:按聊天流目标 ID 形态路由——QQ 官方机器人 openid 必然包含大写字母
+        (先转 silk);OneBot v11 的 QQ 号为纯数字(直接把原始音频交给适配器自行转码,
+        避免 silk 时长元数据被固定为 1 秒的问题)。
+        """
+
+        adapter = (self.config.voice.voice_adapter or "auto").strip().lower()
+        if adapter == "auto":
+            adapter = await self._route_adapter_by_target(stream_id)
         if adapter == "qq_official":
             return await self._send_voice_qq_official(audio_b64, stream_id)
+        if adapter == "onebot":
+            return await self._send_voice_onebot(audio_b64, stream_id)
         if adapter == "napcat":
             return await self._send_voice_napcat(audio_b64, stream_id)
-        self.ctx.logger.error("不支持的语音适配器配置: %s (可选 qq_official / napcat)", adapter)
+        self.ctx.logger.error("不支持的语音适配器配置: %s (可选 auto / qq_official / onebot / napcat)", adapter)
         return False
+
+    async def _route_adapter_by_target(self, stream_id: str) -> str:
+        """按聊天流目标 ID 形态选择语音适配器。
+
+        OneBot v11 的 QQ 号为 5-11 位纯数字;QQ 官方机器人 openid(如
+        665833726E2795DB835D8C68192918D4)为 32 位十六进制,必然含大写字母,
+        且长度远超 QQ 号,两者不会混淆。
+        """
+
+        target_id = await self._resolve_stream_target_id(stream_id)
+        if target_id is None:
+            self.ctx.logger.warning("无法解析 stream=%s 的目标ID,按官方机器人(silk)发送", stream_id)
+            return "qq_official"
+        if re.fullmatch(r"\d{1,11}", target_id):
+            return "onebot"
+        if re.search(r"[A-Z]", target_id):
+            return "qq_official"
+        self.ctx.logger.warning("目标ID形态无法判断: %r (非纯数字QQ号也不含大写字母),按官方机器人(silk)发送", target_id)
+        return "qq_official"
+
+    async def _resolve_stream_target_id(self, stream_id: str) -> Optional[str]:
+        """通过 chat.get_all_streams 解析该流的目标 ID(群聊取群ID,私聊取用户ID),解析不到返回 None。"""
+
+        try:
+            result = await self.ctx.chat.get_all_streams(platform="all_platforms")
+        except Exception as exc:
+            self.ctx.logger.warning("chat.get_all_streams 解析失败: %s", exc)
+            return None
+        if isinstance(result, list):
+            streams = result
+        elif isinstance(result, dict):
+            streams = result.get("streams", [])
+        else:
+            streams = []
+        for item in streams:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("session_id") or "") == stream_id or str(item.get("stream_id") or "") == stream_id:
+                if item.get("is_group_session"):
+                    return str(item.get("group_id") or "") or None
+                return str(item.get("user_id") or "") or None
+        return None
 
     async def _send_voice_qq_official(self, audio_b64: str, stream_id: str) -> bool:
         """发送 QQ 官方机器人语音:先转 silk,再以 voice 段交给官方适配器上传。"""
@@ -282,6 +334,21 @@ class AIVoicePlugin(MaiBotPlugin):
             self.ctx.logger.error("QQ 官方语音发送失败: voice 段未送达, stream=%s", stream_id)
             return False
         self.ctx.logger.info("QQ official voice sent via voice segment, stream=%s", stream_id)
+        return True
+
+    async def _send_voice_onebot(self, audio_b64: str, stream_id: str) -> bool:
+        """发送 OneBot v11(SnowLuma)语音:直接把原始音频交给适配器,由链路自行转码为 silk。"""
+
+        self.ctx.logger.info("Sending OneBot voice (raw audio) to stream=%s, b64_len=%d", stream_id, len(audio_b64))
+        try:
+            sent = await self.ctx.send.custom("voice", audio_b64, stream_id)
+        except Exception as exc:
+            self.ctx.logger.warning("voice+原始音频发送异常: %s", exc)
+            sent = False
+        if not sent:
+            self.ctx.logger.error("OneBot 语音发送失败: voice+原始音频未送达, stream=%s", stream_id)
+            return False
+        self.ctx.logger.info("OneBot voice sent via voice segment (raw audio), stream=%s", stream_id)
         return True
 
     async def _send_voice_napcat(self, audio_b64: str, stream_id: str) -> bool:

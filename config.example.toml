@@ -13,6 +13,6 @@ clone_voice = ""
 design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear." # 推荐:音色设计的英文描述(插件固定英文发音,支持不同国家口音)
 design_voice = "" # 不建议填写中文描述(中文朗读质量差);留空时使用上面的英文描述
 llm_task = "replyer"
-voice_adapter = "qq_official"
+voice_adapter = "auto" # auto=按目标ID自动路由(官方openid含大写字母→先转silk;OneBot纯数字QQ号→原始音频交适配器转码,避免时长显示1秒) / qq_official / onebot / napcat
 save_audio = true
 save_dir = "output"
