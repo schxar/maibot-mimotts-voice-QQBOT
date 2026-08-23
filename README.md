@@ -1,12 +1,15 @@
 # MiMo TTS Voice Plugin for MaiBot
 
-基于小米 MiMo-V2.5-TTS 的 AI 语音服务插件，为 MaiBot 提供智能语音回复功能。支持**预置音色**和**音色复刻**两种模式。
+基于小米 MiMo-V2.5-TTS 的 AI 语音服务插件，为 MaiBot 提供智能语音回复功能。
+
+> ⚠️ **本 Fork 说明**：语音**只使用英文**（中文内容会自动翻译成英文后再合成，翻译后朗读质量较差，不建议中文），主要支持 `design`（一句话英文描述生成音色）模式。`clone`（音色复刻）与 `preset`（预置音色）模式仅保留兼容，**不建议切换使用**。
 
 
 ## 功能特性(好用的话请点个star⭐~)
 
-- 🎤 **预置音色**：内置 9 种精品音色（中文/英文，男声/女声），开箱即用
-- 🎭 **音色复刻**：通过音频样本精准复刻任意音色，放入 `voices/` 目录即可
+- 🎨 **音色设计（design，本 Fork 主推）**：一句话英文描述凭空生成全新音色，无需任何参考音频，支持年龄、性别、口音、音色、语速、气质、录音质感等任意维度
+- 🎤 **预置音色（preset）**：内置 9 种精品音色（中文/英文，男声/女声），仅保留兼容，**非本 Fork 主推**（中文音色本 Fork 不适用）
+- 🎭 **音色复刻（clone）**：通过音频样本复刻音色，放入 `voices/` 目录即可，仅保留兼容，**非本 Fork 主推**
 - 🤖 **AI 工具链暴露**：`send_voice_reply` 工具暴露在 AI 工具链中（`activation_type=ALWAYS`），AI 可自主决定何时使用语音回复
 - 🎨 **AI 智能风格控制**：风格指令由 AI 根据角色人设和对话情境自行决定，无需用户手动配置
 - 🎬 **导演模式**：支持从角色、场景、指导三个维度全方位刻画语音表演，AI 自动判断何时需要深度演绎
@@ -42,10 +45,8 @@ config_version = "1.0.0"
 [voice]
 mimo_api_key = "your_api_key_here"
 api_base_url = "https://token-plan-cn.xiaomimimo.com/v1"
-voice_mode = "preset"
-preset_voice = "冰糖"
-voices_dir = "voices"
-clone_voice = ""
+voice_mode = "design"
+design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear."
 voice_adapter = "qq_official"
 ```
 
@@ -59,20 +60,18 @@ voice_adapter = "qq_official"
 |--------|------|--------|
 | `mimo_api_key` | MiMo API Key（必填） | - |
 | `api_base_url` | API 地址 | `https://token-plan-cn.xiaomimimo.com/v1` |
-| `voice_mode` | 音色模式：`preset`、`clone` 或 `design` | `preset` |
-| `preset_voice` | 预置音色名称（preset 模式） | `mimo_default` |
-| `voices_dir` | 音色复刻目录（clone 模式，相对于插件目录） | `voices` |
-| `clone_voice` | 指定复刻音色文件名（留空使用第一个文件） | - |
-| `design_voice` | 音色设计模式的一句话中文描述（design 模式，缺少英文描述时自动翻译） | 见 config.example.toml |
-| `design_voice_en` | 音色设计模式的一句话英文描述（固定英文发音，支持不同国家口音） | 见 config.example.toml |
+| `voice_mode` | 音色模式：`design`（主推） / `preset`、`clone`（仅兼容，不推荐） | `design` |
+| `preset_voice` | 预置音色名称（preset 模式，不推荐） | `mimo_default` |
+| `voices_dir` | 音色复刻目录（clone 模式，不推荐，相对于插件目录） | `voices` |
+| `clone_voice` | 指定复刻音色文件名（clone 模式不推荐，留空使用第一个文件） | - |
+| `design_voice_en` | 音色设计模式的一句话英文描述（推荐填写；固定英文发音，支持不同国家口音） | 见 config.example.toml |
+| `design_voice` | 音色设计模式的一句话中文描述（不推荐填写，中文朗读质量差；仅当英文描述为空时兜底，且会先翻译成英文） | 空 |
 | `llm_task` | 自动翻译使用的模型任务名（如 `replyer`/`planner`/`utils`），需与主程序 `model_config.toml` 的任务名一致 | `replyer` |
-
-语音固定为英文发音：文本、风格指令或音色描述中含中文的内容会自动调用主程序 LLM 翻译成英文后再合成，避免中文炸音。
 | `voice_adapter` | 语音适配器：`qq_official`（QQ 官方机器人，音频自动转 silk 后上传）或 `napcat`（NapCat/OneBot v11） | `qq_official` |
 | `save_audio` | 是否把生成与发送的语音存档到本地 | `true` |
 | `save_dir` | 语音存档目录（相对于插件目录） | `output` |
 
-语音按原文（中文）直接朗读，风格提示由 AI 自行决定。
+语音固定为英文发音：文本、风格指令或音色描述中含中文的内容会自动调用主程序 LLM 翻译成英文后再合成，避免中文炸音；**建议文本、语气与音色描述一律使用英文**，中文经翻译后再朗读质量明显下降。
 
 ### 语音适配器说明
 
@@ -90,7 +89,9 @@ FFmpeg 查找顺序为：系统 PATH → 插件目录 `bin/` → 自动下载。
 
 ## 音色模式
 
-### 预置音色（preset）
+### 预置音色（preset，仅保留兼容，不推荐）
+
+> ⚠️ 本 Fork 不推荐使用 preset 模式：语音固定英文，中文预置音色不适用；以下音色列表仅作保留记录。
 
 无需额外配置，直接在 `preset_voice` 中填入音色名称：
 
@@ -106,17 +107,21 @@ FFmpeg 查找顺序为：系统 PATH → 插件目录 `bin/` → 自动下载。
 | `Milo` | 英文 | 男性 |
 | `Dean` | 英文 | 男性 |
 
-### 音色设计（design）
+### 音色设计（design，主推）
 
-无需任何参考音频，在 `design_voice` 里写一句话描述即可凭空生成全新音色（支持年龄、性别、口音、音色、语速、气质、录音质感等任意维度）：
+无需任何参考音频，在 `design_voice_en` 里写一句话英文描述即可凭空生成全新音色（支持年龄、性别、口音、音色、语速、气质、录音质感等任意维度）：
 
 ```
-design_voice = "一位青春甜美的少女,声音清甜软糯,语调温柔,带有微微的撒娇和亲密感,像在恋人耳边轻声呢喃"
+design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear."
 ```
+
+**建议一律使用英文描述**：插件固定以英文朗读，中文描述会先经主程序 LLM 翻译成英文再用，朗读质量明显不如直接写英文。`design_voice`（中文）仅作兜底，不建议填写。
 
 每次合成时，语音风格指令（`style_instruction`）还会自动并入音色描述，用于指导语气与情绪。`voice_mode = "design"` 时忽略 `voices/` 目录与预置音色配置。
 
-### 音色复刻（clone）
+### 音色复刻（clone，仅保留兼容，不推荐）
+
+> ⚠️ 本 Fork 不推荐使用 clone 模式（仅保留兼容，未重点维护）；且语音固定英文，参考音色只用于复刻音色质感。
 
 1. 将 `voice_mode` 改为 `clone`
 2. 将参考音频文件放入 `voices/` 目录（支持 WAV 和 MP3）
@@ -135,8 +140,7 @@ plugins/maibot-mimotts-voice/voices/
 |------|------|------|------|
 | `reply_text` | string | ✅ | 要合成语音的回复文本 |
 | `msg_id` | string | ✅ | 当前消息 ID，用于自动查找聊天流 |
-| `style_instruction` | string | ❌ | 语音风格指令 |
-| `reply_language` | string | ❌ | 语音语言：`zh`（中文，默认）或 `en`（英文）；选 `en` 时 reply_text 直接写英文原文，音色按英文描述重新设计（支持不同国家口音） |
+| `style_instruction` | string | ❌ | 语音风格指令（建议用英文） |
 
 ## 命令说明
 
@@ -151,16 +155,16 @@ plugins/maibot-mimotts-voice/voices/
 
 | 段 | 参数 | 说明 |
 |----|------|------|
-| 1 | 说话内容 | 要朗读的文字，英文效果最佳；中文会自动翻译成英文再朗读 |
-| 2 | 语气 | 风格描述，如 `gentle sweet tone, slightly slower` |
+| 1 | 说话内容 | 要朗读的文字，建议直接用英文（效果最佳）；中文会先翻译成英文再朗读，质量较差 |
+| 2 | 语气 | 风格描述（英文），如 `gentle sweet tone, slightly slower` |
 
 示例：
 
 - `/tts No need to thank me~+gentle sweet tone, a little clingy` ← 发回给发送者
-- `/tts 不用谢啦~+温柔甜蜜的恋人语气,带点撒娇` ← 发回给发送者（自动翻译为英文）
+- `/tts 不用谢啦~+gentle sweet tone, a little clingy` ← 发回给发送者（中文自动翻译，建议直接写英文）
 - `/tts help` ← 查看完整用法
 
-语音固定为英文发音（中文内容自动翻译），默认发回当前会话的发送者。
+语音固定为英文发音（中文输入会自动翻译，建议尽量用英文输入以保证最好效果），默认发回当前会话的发送者。
 
 ### 端到端测试脚本
 

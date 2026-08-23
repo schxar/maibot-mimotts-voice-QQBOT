@@ -55,18 +55,18 @@ class VoiceSectionConfig(PluginConfigBase):
         description="MiMo API地址",
         json_schema_extra={"label": "API地址"},
     )
-    voice_mode: str = Field(default="clone", description="语音模式: 'clone'(音色复刻) / 'preset'(预置音色) / 'design'(音色设计,一句话描述生成音色)")
-    preset_voice: str = Field(default="mimo_default", description="预置音色ID（仅preset模式生效）")
+    voice_mode: str = Field(default="design", description="语音模式: 'design'(主推,一句话英文描述生成音色,本fork固定英文发音) / 'clone'(音色复刻,仅兼容不推荐) / 'preset'(预置音色,仅兼容不推荐)")
+    preset_voice: str = Field(default="mimo_default", description="预置音色ID（仅preset模式生效,本fork不推荐）")
     voices_dir: str = Field(default="voices", description="音色目录路径（相对于插件目录）")
     default_voice: str = Field(default="", description="默认音色名称（clone模式下为音频文件名）")
-    clone_voice: str = Field(default="", description="复刻音色文件名（clone模式下优先使用）")
-    design_voice: str = Field(
-        default="一位年轻女性,温柔甜美的声音,像在耳边轻声说话",
-        description="音色设计模式的一句话中文描述（仅voice_mode=design时生效,可包含口音/年龄/气质/录音质感等）",
-    )
+    clone_voice: str = Field(default="", description="复刻音色文件名（clone模式下优先使用,本fork不推荐）")
     design_voice_en: str = Field(
-        default="A sweet young woman with a soft clear voice, gentle and a little playful, like whispering in a lover's ear.",
-        description="音色设计模式的一句话英文描述（支持不同国家口音）",
+        default="A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear.",
+        description="音色设计模式的一句话英文描述（推荐填写,支持不同国家口音;插件固定英文发音）",
+    )
+    design_voice: str = Field(
+        default="",
+        description="音色设计模式的一句话中文描述（仅当 design_voice_en 为空时兜底,会先翻译成英文;不推荐填写,中文朗读质量差）",
     )
     llm_task: str = Field(
         default="replyer",
@@ -93,12 +93,12 @@ class AIVoicePlugin(MaiBotPlugin):
         "  /tts 说话内容+语气\n"
         "  /tts help\n\n"
         "参数用 + 分隔(也支持 | 或全角＋),共 2 段:\n"
-        "  1. 说话内容  要朗读的文字,英文效果最佳;中文会自动翻译成英文再朗读\n"
-        "  2. 语气      风格描述,如:gentle sweet tone, slightly slower\n\n"
+        "  1. 说话内容  要朗读的文字,建议直接用英文(效果最佳);中文会先翻译成英文再朗读,质量较差\n"
+        "  2. 语气      风格描述(英文),如:gentle sweet tone, slightly slower\n\n"
         "语音固定为英文发音,发送目标为当前会话的发送者(默认发回给输入命令的人)。\n"
         "示例:\n"
         "  /tts No need to thank me~+gentle sweet tone, a little clingy\n"
-        "  /tts 不用谢啦~+温柔甜蜜的恋人语气,带点撒娇"
+        "  /tts 不用谢啦~+gentle sweet tone, a little clingy(中文自动翻译,建议直接写英文)"
     )
 
     def __init__(self) -> None:

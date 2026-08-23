@@ -4,14 +4,14 @@ config_version = "1.0.0"
 
 [voice]
 mimo_api_key = ""
-api_base_url = "https://token-plan-cn.xiaomimimo.com/v1"
-voice_mode = "clone"
+api_base_url = "https://api.xiaomimimo.com/v1"
+voice_mode = "design"
 preset_voice = "mimo_default"
 voices_dir = "voices"
 default_voice = ""
 clone_voice = ""
-design_voice = "一位年轻女性,温柔甜美的声音,像在耳边轻声说话"
-design_voice_en = "A sweet young woman with a soft clear voice, gentle and a little playful, like whispering in a lover's ear."
+design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear." # 推荐:音色设计的英文描述(插件固定英文发音,支持不同国家口音)
+design_voice = "" # 不建议填写中文描述(中文朗读质量差);留空时使用上面的英文描述
 llm_task = "replyer"
 voice_adapter = "qq_official"
 save_audio = true

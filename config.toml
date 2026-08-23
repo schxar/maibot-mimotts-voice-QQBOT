@@ -1,0 +1,18 @@
+[plugin]
+enabled = true
+config_version = "1.0.0"
+
+[voice]
+mimo_api_key = ""
+api_base_url = "https://api.xiaomimimo.com/v1"
+voice_mode = "design"
+preset_voice = "ysjqx"
+voices_dir = "voices"
+default_voice = "ysjqx"
+clone_voice = "ysjqx"
+design_voice = ""
+design_voice_en = "A sweet young woman with a soft clear voice, british accent, gentle and a little playful, like whispering in a lover's ear."
+llm_task = "replyer"
+voice_adapter = "qq_official"
+save_audio = true
+save_dir = "output"
