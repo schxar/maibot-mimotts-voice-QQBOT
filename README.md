@@ -23,7 +23,7 @@
 
 ```bash
 cd /path/to/MaiBot/plugins/
-git clone https://github.com/Emilia-awa/maibot-mimotts-voice.git
+git clone https://github.com/schxar/maibot-mimotts-voice-QQBOT.git
 ```
 
 ### 2. 安装依赖
