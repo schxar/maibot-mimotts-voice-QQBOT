@@ -27,6 +27,20 @@ except ImportError:
     from tts_service import MiMoTTSService
 
 
+# 翻译 LLM 调用超时预算(毫秒):不显式传时 Runner 默认仅 30s,慢模型下必超时,
+# 提升到与主程序回复任务硬超时(如 replyer=240s)同一量级
+TRANSLATE_RPC_TIMEOUT_MS = 120_000
+# 翻译超时后的最大尝试次数(含首次),仅对 RPC 超时(E_TIMEOUT)触发重试
+TRANSLATE_MAX_ATTEMPTS = 2
+
+
+def _is_rpc_timeout(exc: Exception) -> bool:
+    """识别宿主 RPC 超时异常(E_TIMEOUT),用于区分"超时"与"模型配置错误"。"""
+
+    code = getattr(exc, "code", None)
+    return getattr(code, "value", None) == "E_TIMEOUT"
+
+
 class PluginSectionConfig(PluginConfigBase):
     __ui_label__ = "插件"
     enabled: bool = Field(default=True, description="是否启用")
@@ -304,7 +318,19 @@ class AIVoicePlugin(MaiBotPlugin):
             "若原文包含括号语气标签(如(轻笑)(叹气)(温柔)),请保留在原位。\n\n"
             f"{text}"
         )
-        result = await self.ctx.llm.generate(prompt, model=task_name)
+        for attempt in range(1, TRANSLATE_MAX_ATTEMPTS + 1):
+            try:
+                # timeout_ms 显式传给 RPC 层:不传时 Runner 默认 30s,慢模型必超时
+                result = await self.ctx.llm.generate(
+                    prompt, model=task_name, timeout_ms=TRANSLATE_RPC_TIMEOUT_MS
+                )
+                break
+            except Exception as exc:
+                # 仅对 RPC 超时重试,其余异常直接抛出,交由调用方区分文案
+                if not _is_rpc_timeout(exc) or attempt == TRANSLATE_MAX_ATTEMPTS:
+                    raise
+                self.ctx.logger.warning("LLM 翻译调用超时(%ds),重试中(%d/%d): %s",
+                    TRANSLATE_RPC_TIMEOUT_MS // 1000, attempt, TRANSLATE_MAX_ATTEMPTS, exc)
         if not isinstance(result, dict) or not result.get("success"):
             raise RuntimeError(str((result or {}).get("error") or "LLM 无法响应"))
         translated_text = str(result.get("response") or "").strip()
@@ -389,6 +415,8 @@ class AIVoicePlugin(MaiBotPlugin):
                 self.ctx.logger.info("音色描述已翻译为英文: %s", voice_key[:80])
         except Exception as exc:
             self.ctx.logger.error(f"自动翻译失败: {exc}", exc_info=True)
+            if _is_rpc_timeout(exc):
+                return {"success": False, "error": f"自动翻译超时,已重试仍失败,请更换更快的翻译模型(如 utils 任务)或稍后再试: {exc}"}
             return {"success": False, "error": f"自动翻译失败,请检查主程序模型配置: {exc}"}
         if not voice_key:
             return {"success": False, "error": "No voice configured. Check voice config."}
