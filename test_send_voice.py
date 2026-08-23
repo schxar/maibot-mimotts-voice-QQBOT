@@ -280,9 +280,7 @@ async def main() -> int:
 
         ffmpeg_path = await ensure_ffmpeg_binary(PLUGIN_DIR / "bin", LOGGER)
         silk_bytes = await audio_to_silk(audio_bytes, ffmpeg_path)
-        silk_path = save_dir / f"tts_silk_{timestamp}.silk"
-        silk_path.write_bytes(silk_bytes)
-        LOGGER.info("SILK 编码完成并已存档: %s (%dKB)", silk_path, len(silk_bytes) // 1024)
+        LOGGER.info("SILK 编码完成: %dKB", len(silk_bytes) // 1024)
 
         access_token = await fetch_access_token(session, appid, app_secret)
         file_info = await upload_voice(session, base_url, access_token, target_openid, silk_bytes)

@@ -274,7 +274,6 @@ class AIVoicePlugin(MaiBotPlugin):
             self.ctx.logger.error(f"音频转 silk 失败: {exc}", exc_info=True)
             return False
 
-        self._save_audio_bytes(silk_bytes, "tts_silk", "silk", "official")
         silk_b64 = base64.b64encode(silk_bytes).decode("ascii")
         self.ctx.logger.info("QQ official voice converted: silk_len=%dKB", len(silk_bytes) // 1024)
 
